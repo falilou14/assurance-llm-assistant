@@ -1,0 +1,97 @@
+# --- FICHIERS PERSONNELS ---
+tokensHuggingFace.txt
+testPython.py
+
+# --- ENVIRONNEMENTS PYTHON ---
+venv/
+.env/
+.venv/
+env/
+*/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- STREAMLIT ---
+.streamlit/secrets.toml
+.streamlit/*.lock
+.streamlit/cache/
+.streamlit/static/*
+
+# --- HUGGINGFACE / TRANSFORMERS ---
+/root/.cache/huggingface/
+~/.cache/huggingface/
+.cache/huggingface/
+huggingface/
+hf_cache/
+transformers_cache/
+.cache/hf/
+huggingface_cache/
+**/checkpoint-*/
+**/runs/
+
+# --- MODELS & LORA CHECKPOINTS ---
+models/
+weights/
+checkpoints/
+lora/
+output/
+outputs/
+saved_models/
+peft/
+*.bin
+*.safetensors
+
+# --- TORCH ---
+torch_cache/
+.cache/torch/
+torch_extensions/
+*.pt
+*.pth
+
+# --- FAISS / RAG ---
+faiss_index/
+faiss/
+indexes/
+rag_index/
+*.faiss
+*.hdf5
+
+# --- LOGS ---
+logs/
+*.log
+
+# --- DATASETS ---
+data/
+dataset/
+datasets/
+*.csv
+*.json
+*.jsonl
+*.parquet
+
+# --- NOTEBOOKS ---
+*.ipynb_checkpoints
+.ipynb_checkpoints/
+
+# --- CONFIG ---
+config.json
+*.yaml
+*.yml
+
+# --- TEMP FILES ---
+*.tmp
+*.temp
+*.bak
+.DS_Store
+Thumbs.db
+
+# --- IDEs ---
+.vscode/
+.idea/
+
+# --- BUILD / DIST ---
+build/
+dist/
+*.egg-info/

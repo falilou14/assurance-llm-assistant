@@ -1,0 +1,9 @@
+torch
+transformers
+peft
+datasets
+accelerate
+faiss-cpu
+streamlit
+sentencepiece
+sentence-transformers
