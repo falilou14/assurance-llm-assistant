@@ -184,7 +184,21 @@ Ce projet combine :
 - Chargement LoRA sécurisé (sans crash `accelerate`)
 - Modèle léger supporté (3B à 7B)
 
+
 ---
 
-## 📂 Structure du projet
+## 🚀 Installation
+
+###  Cloner le projet
+```bash
+git clone https://github.com/<ton-username>/assurance-llm-assistant.git
+cd assurance-llm-assistant
+
+### Installer les dépendances
+```bash
+pip install -r requirements.txt
+
+ ### Lancer l’interface
+```bash
+streamlit run app/streamlit_app.py
 
