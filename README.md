@@ -198,7 +198,7 @@ cd assurance-llm-assistant
 ```bash
 pip install -r requirements.txt
 
- ### Lancer l’interface
+### Lancer l’interface
 ```bash
 streamlit run app/streamlit_app.py
 
