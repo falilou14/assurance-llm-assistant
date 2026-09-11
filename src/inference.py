@@ -11,7 +11,7 @@ from transformers import pipeline
 
 from src.rag_pipeline import query_faiss
 from src.utils import format_conversation_prompt
-from src.lora_training import load_peft_model_safe  # version CPU-safe
+from src.lora_training import load_peft_model_bf16  # CPU-safe, sans 4-bit (voir notes)
 
 DEVICE = "cpu"   # On force CPU, car load_peft_model_safe est CPU-only
 
@@ -26,8 +26,8 @@ def load_model_for_inference(peft_dir: str, base_model: Optional[str] = None):
     - base_model : nom du modèle de base (ex: mistralai/Mistral-7B-Instruct-v0.2)
     """
 
-    # Version SAFE → pas de device_map, pas offload, pas GPU
-    model, tokenizer = load_peft_model_safe(
+    # bf16 direct (pas de 4-bit) -> voir load_peft_model_bf16 pour le pourquoi
+    model, tokenizer = load_peft_model_bf16(
         peft_dir=peft_dir,
         base_model_name=base_model,
     )
@@ -61,22 +61,23 @@ def generate_answer(
     Si rag_index_dir fourni → ajout de contexte RAG.
     """
 
-    # Si RAG actif → récupérer les documents FAISS
+    # Même template qu'à l'entraînement (format_conversation_prompt) : un LLM
+    # fine-tuné associe une forme de prompt précise à une forme de réponse --
+    # changer le template entre train et inference casse cette association
+    # (voir le bug de génération dégénérée diagnostiqué en session 1).
     if rag_index_dir:
         hits = query_faiss(question, rag_index_dir, top_k=top_k)
-
-        contexts = "\n\n".join([
-            f"Contexte {i+1}: {hit[2]}" for i, hit in enumerate(hits)
-        ])
-
-        prompt = (
-            f"Voici des documents de référence:\n"
-            f"{contexts}\n\n"
-            f"Question: {question}\n"
-            f"Réponse :"
-        )
+        context = "\n\n".join(hit[2] for hit in hits)
     else:
-        prompt = f"Question: {question}\nRéponse :"
+        context = ""
+
+    prompt = format_conversation_prompt(
+        instruction=question,
+        input_text=context,
+        output_text="",
+    )
+    # On génère à partir d'où le training s'arrêtait juste avant la réponse :
+    # format_conversation_prompt termine toujours par "### Réponse:\n".
 
     outputs = model_pipeline(
         prompt,
@@ -87,7 +88,10 @@ def generate_answer(
         repetition_penalty=1.2,
     )
 
-    return outputs[0]["generated_text"]
+    full_text = outputs[0]["generated_text"]
+    # Le pipeline renvoie prompt + complétion concaténés ; on ne garde que
+    # ce qui a été généré après "### Réponse:\n" pour l'affichage.
+    return full_text[len(prompt):].strip()
 
 
 # -----------------------------------------------------------

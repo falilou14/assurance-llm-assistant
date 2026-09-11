@@ -3,6 +3,7 @@ transformers
 peft
 datasets
 accelerate
+bitsandbytes
 faiss-cpu
 streamlit
 sentencepiece

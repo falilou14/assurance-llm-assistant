@@ -79,3 +79,44 @@ def load_peft_model_safe(peft_dir: str, base_model_name: Optional[str] = None):
         model = base_model
 
     return model, tokenizer
+
+
+# ---------------------------------------------------------
+# 🔥 Chargement LoRA — CPU, sans 4-bit
+# ---------------------------------------------------------
+def load_peft_model_bf16(peft_dir: str, base_model_name: Optional[str] = None):
+    """
+    Charge un modèle LoRA en bfloat16 direct (pas de quantization 4-bit).
+
+    Pourquoi pas la version 4-bit ici : bitsandbytes sur CPU a un chemin de
+    calcul peu optimisé (observé : memory thrashing sévère à l'entraînement,
+    voir scripts/train_lora.py). Pour un petit modèle (1.1B), charger en
+    bfloat16 direct est plus simple, plus prévisible, et suffisamment léger
+    (~2.2 Go) tant que la RAM libre est correcte.
+    """
+    try:
+        pconfig = PeftConfig.from_pretrained(peft_dir)
+        if base_model_name is None:
+            base_model_name = pconfig.base_model_name_or_path
+    except Exception:
+        pconfig = None
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        base_model_name if base_model_name else peft_dir
+    )
+
+    logger.info(f"Chargement du base model (bfloat16, CPU) : {base_model_name}")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+    )
+
+    if pconfig:
+        logger.info(f"Application LoRA depuis {peft_dir}")
+        model = PeftModel.from_pretrained(base_model, peft_dir)
+    else:
+        model = base_model
+
+    model.eval()
+    return model, tokenizer
