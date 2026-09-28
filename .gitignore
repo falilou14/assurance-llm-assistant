@@ -79,6 +79,9 @@ datasets/
 config.json
 *.yaml
 *.yml
+# ...sauf les workflows GitHub Actions, qui doivent être versionnés
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
 
 # --- TEMP FILES ---
 *.tmp

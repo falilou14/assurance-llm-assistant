@@ -8,3 +8,9 @@ faiss-cpu
 streamlit
 sentencepiece
 sentence-transformers
+
+# API (voir aussi requirements-api.txt, utilisé seul par la CI)
+fastapi
+uvicorn[standard]
+httpx
+requests

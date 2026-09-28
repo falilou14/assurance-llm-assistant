@@ -4,9 +4,6 @@ Chargement du modèle (base + LoRA) et génération.
 Optionnellement combine RAG (retrieval) pour fournir du contexte.
 """
 
-import os
-from typing import Optional
-import torch
 from transformers import pipeline
 
 from src.rag_pipeline import query_faiss
@@ -19,7 +16,7 @@ DEVICE = "cpu"   # On force CPU, car load_peft_model_safe est CPU-only
 # -----------------------------------------------------------
 # 🔥 Chargement du modèle (LoRA + Base)
 # -----------------------------------------------------------
-def load_model_for_inference(peft_dir: str, base_model: Optional[str] = None):
+def load_model_for_inference(peft_dir: str, base_model: str | None = None):
     """
     Retourne (model, tokenizer, generator_pipe)
     - peft_dir : dossier des poids LoRA
@@ -47,38 +44,30 @@ def load_model_for_inference(peft_dir: str, base_model: Optional[str] = None):
 # -----------------------------------------------------------
 # 🔥 Génération de texte
 # -----------------------------------------------------------
-def generate_answer(
-    question: str,
-    model_pipeline,
-    tokenizer,
-    rag_index_dir: Optional[str] = None,
-    top_k: int = 3,
-    max_new_tokens: int = 256,
-    temperature: float = 0.2,
-):
+def build_prompt(question: str, context: str = "") -> str:
     """
-    Génère une réponse.
-    Si rag_index_dir fourni → ajout de contexte RAG.
+    Construit le prompt avec le même template qu'à l'entraînement
+    (format_conversation_prompt) : un LLM fine-tuné associe une forme de
+    prompt précise à une forme de réponse -- changer le template entre
+    train et inference casse cette association (voir le bug de génération
+    dégénérée diagnostiqué en session 1).
     """
-
-    # Même template qu'à l'entraînement (format_conversation_prompt) : un LLM
-    # fine-tuné associe une forme de prompt précise à une forme de réponse --
-    # changer le template entre train et inference casse cette association
-    # (voir le bug de génération dégénérée diagnostiqué en session 1).
-    if rag_index_dir:
-        hits = query_faiss(question, rag_index_dir, top_k=top_k)
-        context = "\n\n".join(hit[2] for hit in hits)
-    else:
-        context = ""
-
-    prompt = format_conversation_prompt(
+    return format_conversation_prompt(
         instruction=question,
         input_text=context,
         output_text="",
     )
-    # On génère à partir d'où le training s'arrêtait juste avant la réponse :
-    # format_conversation_prompt termine toujours par "### Réponse:\n".
+    # format_conversation_prompt termine toujours par "### Réponse:\n" --
+    # on génère à partir de là, exactement où le training s'arrêtait.
 
+
+def run_generation(
+    model_pipeline,
+    prompt: str,
+    max_new_tokens: int = 256,
+    temperature: float = 0.2,
+) -> str:
+    """Appelle le pipeline de génération et renvoie uniquement la complétion."""
     outputs = model_pipeline(
         prompt,
         max_new_tokens=max_new_tokens,
@@ -87,11 +76,37 @@ def generate_answer(
         top_p=0.95,
         repetition_penalty=1.2,
     )
-
     full_text = outputs[0]["generated_text"]
     # Le pipeline renvoie prompt + complétion concaténés ; on ne garde que
     # ce qui a été généré après "### Réponse:\n" pour l'affichage.
     return full_text[len(prompt):].strip()
+
+
+def generate_answer(
+    question: str,
+    model_pipeline,
+    tokenizer,
+    rag_index_dir: str | None = None,
+    top_k: int = 3,
+    max_new_tokens: int = 256,
+    temperature: float = 0.2,
+):
+    """
+    Génère une réponse. Si rag_index_dir fourni → ajout de contexte RAG.
+
+    Utilitaire pratique pour des scripts ponctuels (recharge l'index à
+    chaque appel via query_faiss). Pour un service qui répond à beaucoup
+    de requêtes, préférer LocalLLMClient (src/llm_client.py), qui garde
+    l'index RAG chargé une seule fois en mémoire.
+    """
+    if rag_index_dir:
+        hits = query_faiss(question, rag_index_dir, top_k=top_k)
+        context = "\n\n".join(hit[2] for hit in hits)
+    else:
+        context = ""
+
+    prompt = build_prompt(question, context)
+    return run_generation(model_pipeline, prompt, max_new_tokens, temperature)
 
 
 # -----------------------------------------------------------
@@ -100,8 +115,8 @@ def generate_answer(
 def answer_with_optional_rag(
     question: str,
     peft_dir: str,
-    base_model: Optional[str],
-    rag_dir: Optional[str] = None
+    base_model: str | None,
+    rag_dir: str | None = None
 ):
     model, tokenizer, gen = load_model_for_inference(peft_dir, base_model)
     answer = generate_answer(question, gen, tokenizer, rag_index_dir=rag_dir)

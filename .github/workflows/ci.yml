@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Volontairement requirements-api.txt seul, PAS requirements.txt :
+      # pas de torch/transformers ici, donc ce job dure des secondes,
+      # pas des minutes. Voir tests/test_api.py pour le pourquoi.
+      - run: pip install -r requirements-api.txt
+
+      # Lint scopé aux fichiers de l'API : le reste du dépôt (scripts/,
+      # notebooks) est un code plus ancien, pas encore mis aux normes --
+      # on ne bloque pas la CI dessus tant qu'on ne l'a pas retouché.
+      - run: ruff check api/ src/llm_client.py src/inference.py tests/
+
+      - run: pytest tests/test_api.py -v

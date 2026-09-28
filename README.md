@@ -5,6 +5,7 @@
 ![PEFT](https://img.shields.io/badge/Fine--tuning-LoRA%20(PEFT)-2C5C55)
 ![FAISS](https://img.shields.io/badge/RAG-FAISS-8A5E1F)
 ![CPU](https://img.shields.io/badge/Inference-CPU%20only-555)
+![CI](https://github.com/falilou14/assurance-llm-assistant/actions/workflows/ci.yml/badge.svg)
 
 Assistant IA spécialisé dans le domaine de l'**assurance et des sinistres**, combinant un **LLM fine-tuné avec LoRA (QLoRA)** et un système **RAG (FAISS)** pour répondre à des questions métier en s'appuyant sur de vrais documents, via une interface **Streamlit**.
 
@@ -103,11 +104,21 @@ python scripts/build_rag_index.py
 # 3. Entraîner l'adaptateur LoRA (~1h30 sur CPU, TinyLlama-1.1B)
 python scripts/train_lora.py
 
-# 4. Lancer l'interface
+# 4. Lancer l'API (dans un terminal)
+uvicorn api.main:app --port 8000
+
+# 5. Lancer l'interface (dans un second terminal)
 streamlit run app/streamlit_app.py
 ```
 
-L'app est ensuite disponible sur `http://localhost:8501`.
+L'interface est disponible sur `http://localhost:8501`, l'API sur `http://localhost:8000` (doc interactive auto-générée sur `/docs`). Streamlit appelle l'API en HTTP -- il ne charge plus le modèle lui-même.
+
+**Tester l'API seule** (sans Streamlit, ni même le modèle) :
+
+```bash
+pip install -r requirements-api.txt   # léger, sans torch -- utilisé aussi par la CI
+APP_ENV=test pytest tests/test_api.py -v
+```
 
 ---
 
@@ -143,8 +154,12 @@ L'app est ensuite disponible sur `http://localhost:8501`.
 
 ```
 assurance-llm-assistant/
+├── api/
+│   ├── main.py                  # Routes FastAPI (/ask, /health, /ready) + lifespan
+│   ├── schemas.py                # Formes des requêtes/réponses (Pydantic)
+│   └── deps.py                   # Injection de dépendances -- jamais de torch ici
 ├── app/
-│   └── streamlit_app.py        # Interface de chat
+│   └── streamlit_app.py        # Interface de chat -- appelle l'API en HTTP
 ├── data/
 │   ├── raw/                    # Documents source (.txt)
 │   └── processed/               # dataset.jsonl (non versionné)
@@ -156,11 +171,15 @@ assurance-llm-assistant/
 ├── src/
 │   ├── dataset_builder.py
 │   ├── inference.py
+│   ├── llm_client.py             # Seul fichier qui importe torch pour l'API
 │   ├── lora_training.py
 │   ├── preprocessing.py
 │   ├── rag_pipeline.py
 │   └── utils.py
+├── tests/
+│   └── test_api.py               # Tests de l'API avec un faux LLM (rapides, sans torch)
 ├── notebooks/                   # Exploration -- pas la source de vérité (voir ci-dessous)
+├── .github/workflows/ci.yml     # Tests + lint à chaque push
 └── .streamlit/config.toml       # Thème de l'interface
 ```
 

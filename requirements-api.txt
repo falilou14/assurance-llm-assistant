@@ -1,0 +1,12 @@
+# Dépendances de l'API seule -- volontairement SANS torch/transformers/
+# sentence-transformers/faiss. C'est ce qui permet à la CI de tester
+# l'API en quelques secondes, sans télécharger ni charger de modèle
+# (voir tests/test_api.py -- un faux client remplace le LLM réel).
+#
+# Pour faire tourner le VRAI serveur (pas seulement les tests), il faut
+# en plus requirements.txt (qui contient torch, transformers, etc.).
+fastapi
+uvicorn[standard]
+httpx
+pytest
+ruff

@@ -1,16 +1,18 @@
-import sys
-import os
 import json
+import os
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(ROOT_DIR)
-
+import requests
 import streamlit as st
-from src.inference import load_model_for_inference, generate_answer
 
 # ==========================================
 # CONFIG STREAMLIT
 # ==========================================
+# Streamlit ne charge plus le modèle lui-même : il appelle l'API (api/main.py)
+# en HTTP. Il faut donc lancer l'API séparément :
+#   uvicorn api.main:app --port 8000
+# avant (ou en même temps que) `streamlit run app/streamlit_app.py`.
+# API_URL est surchargeable par variable d'environnement (utile en Docker,
+# chapitre suivant, où l'API tourne dans un autre conteneur).
 
 st.set_page_config(
     page_title="Assurance AI Assistant",
@@ -18,9 +20,8 @@ st.set_page_config(
     layout="wide",
 )
 
-PEFT_MODEL_DIR = "models/models/assurance-lora-v3"   # v3 : dataset Q/R varié (43 ex.), plus l'ancien style figé
-BASE_MODEL = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
-RAG_INDEX_DIR = "data/faiss_index"
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
+RAG_INDEX_DIR = "data/faiss_index"  # encore utilisé ici juste pour lister les docs indexés (lecture locale)
 
 # ==========================================
 # STYLE — identité visuelle "dossier" (cohérente avec le carnet de notes)
@@ -114,21 +115,32 @@ with st.sidebar:
     corpus_path = os.path.join(RAG_INDEX_DIR, "corpus.json")
     if os.path.exists(corpus_path):
         try:
-            with open(corpus_path, "r", encoding="utf-8") as f:
+            with open(corpus_path, encoding="utf-8") as f:
                 n_docs = len(json.load(f))
         except Exception:
             n_docs = "?"
 
+    # Interroge /ready plutôt que de supposer que l'API tourne -- l'appel
+    # est rapide (pas de génération), on peut se permettre de le refaire
+    # à chaque rendu de la page.
+    try:
+        r = requests.get(f"{API_URL}/ready", timeout=2)
+        api_state = "🟢 prête" if r.ok and r.json().get("ready") else "🟠 en cours de chargement"
+    except requests.exceptions.RequestException:
+        api_state = "🔴 injoignable"
+
     st.markdown(f"""
+    <div class="mini-metric"><span>API</span><span>{api_state}</span></div>
     <div class="mini-metric"><span>Modèle de base</span><span>TinyLlama-1.1B</span></div>
     <div class="mini-metric"><span>Adaptateur</span><span>lora-v3</span></div>
     <div class="mini-metric"><span>Chunks indexés</span><span>{n_docs}</span></div>
-    <div class="mini-metric"><span>Device</span><span>CPU</span></div>
     """, unsafe_allow_html=True)
+    if api_state == "🔴 injoignable":
+        st.caption(f"Lance l'API : `uvicorn api.main:app --port 8000` (URL attendue : {API_URL})")
 
     if st.button("Voir les documents indexés"):
         if os.path.exists(corpus_path):
-            with open(corpus_path, "r", encoding="utf-8") as f:
+            with open(corpus_path, encoding="utf-8") as f:
                 corpus = json.load(f)
             for i, chunk in enumerate(corpus):
                 st.caption(f"#{i} — {chunk[:90]}…")
@@ -141,17 +153,11 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# CHARGEMENT DU MODÈLE — mis en cache (une seule fois par session serveur)
-# ==========================================
-
-@st.cache_resource(show_spinner=False)
-def get_model():
-    _, tokenizer, gen = load_model_for_inference(PEFT_MODEL_DIR, BASE_MODEL)
-    return tokenizer, gen
-
-# ==========================================
 # CHAT
 # ==========================================
+# Plus de chargement de modèle ici : l'API le fait une seule fois, au
+# démarrage du serveur (voir api/main.py, lifespan). Streamlit ne fait
+# plus qu'un appel HTTP par question.
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -168,16 +174,30 @@ if question:
         st.markdown(question)
 
     with st.chat_message("assistant", avatar="🛡️"):
-        with st.spinner("Chargement du modèle (jusqu'à ~1 min la 1ère fois) puis génération…"):
-            tokenizer, gen = get_model()
-            answer = generate_answer(
-                question,
-                gen,
-                tokenizer,
-                rag_index_dir=RAG_INDEX_DIR if use_rag else None,
-                top_k=top_k,
-                max_new_tokens=max_tokens,
-            )
+        with st.spinner("Interrogation de l'API (génération CPU : jusqu'à 30-60 s)…"):
+            try:
+                resp = requests.post(
+                    f"{API_URL}/ask",
+                    json={
+                        "question": question,
+                        "use_rag": use_rag,
+                        "top_k": top_k,
+                        "max_new_tokens": max_tokens,
+                    },
+                    timeout=180,  # génération CPU lente -- voir le dossier d'étude
+                )
+                if resp.status_code == 503:
+                    answer = "⏳ Le modèle est encore en train de charger côté API. Réessaie dans quelques instants."
+                elif not resp.ok:
+                    answer = f"⚠️ Erreur API ({resp.status_code}) : {resp.text[:200]}"
+                else:
+                    data = resp.json()
+                    answer = data["answer"]
+                    if data.get("sources"):
+                        previews = " · ".join(s[:60] + "…" for s in data["sources"][:3])
+                        answer += f"\n\n---\n*Sources ({len(data['sources'])}, {data['latency_ms']:.0f} ms) : {previews}*"
+            except requests.exceptions.RequestException as e:
+                answer = f"🔴 API injoignable sur {API_URL} -- lance `uvicorn api.main:app --port 8000`.\n\n({e})"
         st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
