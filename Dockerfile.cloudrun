@@ -1,0 +1,81 @@
+# syntax=docker/dockerfile:1
+# Dockerfile.cloudrun -- variante de Dockerfile qui embarque les poids
+# DANS l'image, au lieu de les lire depuis un volume monté en local.
+#
+# Pourquoi une image séparée : Cloud Run n'a pas de disque persistant
+# entre deux démarrages à froid (pas d'équivalent au volume hf-cache
+# utilisé en local avec docker-compose). Sans ça, CHAQUE démarrage à
+# froid retélécharge ~4,4 Go depuis Hugging Face -- constaté en
+# pratique : le premier déploiement a échoué, Cloud Run a abandonné
+# avant la fin du téléchargement. Ici, les poids sont téléchargés UNE
+# FOIS à la construction de l'image ; au démarrage réel, tout est déjà
+# en cache localement (HF_HUB_OFFLINE=1 -- aucun appel réseau).
+#
+# Image plus grosse (~6-7 Go) contre un démarrage plus rapide et fiable
+# -- un vrai compromis délibéré, pas une solution de facilité.
+#
+# TODO (connu, pas encore corrigé) : le "RUN useradd ... && chown -R" en
+# fin de fichier re-touche les ~8 Go déjà téléchargés -- sur ce storage
+# driver, ça duplique les données dans une nouvelle couche au lieu de
+# juste changer leur propriétaire. Image mesurée à 19,7 Go au lieu des
+# ~6-7 Go attendus. Fix : créer l'utilisateur + les dossiers (à vide,
+# donc pas cher) AVANT les étapes de téléchargement, puis USER appuser
+# avant celles-ci -- jamais de chown après coup sur de grosses données.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY api/ api/
+COPY src/ src/
+
+ENV HF_HOME=/data/hf-cache \
+    PEFT_MODEL_DIR=Faliii/assurance-lora-v3 \
+    BASE_MODEL=TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T \
+    RAG_INDEX_DIR=/data/faiss_index \
+    PYTHONUNBUFFERED=1
+
+RUN mkdir -p /data/hf-cache /data/faiss_index
+
+# Télécharge le modèle de base + l'adaptateur UNE FOIS, pendant le build
+# (réseau disponible ici) -- mis en cache dans HF_HOME, qui fait partie
+# de l'image finale. snapshot_download() copie les fichiers bruts SANS
+# jamais charger le modèle en mémoire (contrairement à from_pretrained) --
+# nécessaire ici : charger ~4,4 Go en RAM pendant le build a fait
+# planter le démon Docker, la VM WSL2 étant plafonnée à 4 Go (.wslconfig).
+#
+# --mount=type=secret : le jeton HF n'est monté que pendant CETTE
+# commande, jamais écrit dans une couche de l'image ni dans son
+# historique -- contrairement à un ARG ou une variable ENV, qui
+# resteraient visibles avec `docker history`. Authentifié = débit
+# beaucoup plus rapide (les requêtes anonymes sont bridées côté HF).
+RUN --mount=type=secret,id=hf_token \
+    python -c "from huggingface_hub import snapshot_download, login; import os; \
+p='/run/secrets/hf_token'; \
+login(token=open(p).read().strip()) if os.path.exists(p) else None; \
+snapshot_download(repo_id=os.environ['BASE_MODEL']); \
+snapshot_download(repo_id=os.environ['PEFT_MODEL_DIR'])"
+
+# Télécharge l'index RAG directement à l'emplacement attendu par
+# ensure_index_available() (src/rag_pipeline.py) -- présent localement
+# dans l'image, donc aucun téléchargement au démarrage réel.
+RUN --mount=type=secret,id=hf_token \
+    python -c "from huggingface_hub import hf_hub_download, login; import shutil, os; \
+p='/run/secrets/hf_token'; \
+login(token=open(p).read().strip()) if os.path.exists(p) else None; \
+[shutil.copy(hf_hub_download(repo_id='Faliii/assurance-rag-index', filename=f, repo_type='dataset'), os.path.join(os.environ['RAG_INDEX_DIR'], f)) for f in ('index.faiss', 'corpus.json')]"
+
+# Après cette ligne : plus aucun appel réseau nécessaire au démarrage.
+# Plus rapide, plus fiable, et fonctionne même si le Hub est indisponible.
+ENV HF_HUB_OFFLINE=1
+
+RUN useradd --create-home appuser && chown -R appuser:appuser /app /data
+USER appuser
+
+EXPOSE 8000
+
+CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}
