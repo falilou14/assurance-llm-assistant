@@ -40,4 +40,8 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Forme shell (pas la forme exec ["..."]) -- nécessaire pour que ${PORT:-8000}
+# soit interprété. Cloud Run injecte sa propre variable PORT (8080 par
+# défaut) et exige que le conteneur l'écoute ; en local (docker-compose),
+# PORT n'est pas défini, donc on retombe sur 8000 comme avant.
+CMD uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}

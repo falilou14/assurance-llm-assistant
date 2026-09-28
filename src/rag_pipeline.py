@@ -8,6 +8,7 @@ RAG minimal : embeddings + FAISS index + retrieval.
 
 import os
 import json
+import shutil
 from typing import List, Tuple
 import numpy as np
 
@@ -58,10 +59,45 @@ def build_faiss_index(corpus_texts: List[str], index_dir: str, embedding_model_n
     return index_dir
 
 
+def ensure_index_available(index_dir: str) -> None:
+    """
+    Si l'index FAISS n'existe pas localement, le télécharge depuis un
+    dépôt Hugging Face Hub de type "dataset" (variable d'environnement
+    RAG_INDEX_HUB_REPO). Nécessaire dans un environnement comme Cloud
+    Run, qui n'a pas accès aux volumes montés en local (voir chapitre 2,
+    "un volume monté sur le disque ne se partage pas automatiquement").
+    En local, si les fichiers sont déjà là (build_rag_index.py les a
+    générés), cette fonction ne fait rien.
+    """
+    index_path = os.path.join(index_dir, "index.faiss")
+    corpus_path = os.path.join(index_dir, "corpus.json")
+    if os.path.exists(index_path) and os.path.exists(corpus_path):
+        return
+
+    repo_id = os.environ.get("RAG_INDEX_HUB_REPO")
+    if not repo_id:
+        raise FileNotFoundError(
+            f"Index FAISS introuvable dans {index_dir}, et RAG_INDEX_HUB_REPO "
+            "n'est pas défini pour le télécharger depuis le Hub. "
+            "Lance scripts/build_rag_index.py en local, ou renseigne cette "
+            "variable d'environnement."
+        )
+
+    from huggingface_hub import hf_hub_download
+
+    os.makedirs(index_dir, exist_ok=True)
+    for filename in ("index.faiss", "corpus.json"):
+        downloaded_path = hf_hub_download(
+            repo_id=repo_id, filename=filename, repo_type="dataset"
+        )
+        shutil.copy(downloaded_path, os.path.join(index_dir, filename))
+
+
 def load_faiss_index(index_dir: str) -> Tuple[faiss.Index, List[str], SentenceTransformer]:
     """
     Charge index + corpus + embedder
     """
+    ensure_index_available(index_dir)
     index = faiss.read_index(os.path.join(index_dir, "index.faiss"))
     corpus = json.load(open(os.path.join(index_dir, "corpus.json"), "r", encoding="utf-8"))
     embedder = SentenceTransformer(EMBED_MODEL)
