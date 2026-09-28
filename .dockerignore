@@ -1,0 +1,26 @@
+# Ce qui ne doit jamais entrer dans une image (ni même être envoyé au
+# démon Docker comme contexte de build -- .venv et models/ à eux seuls
+# peuvent peser plusieurs Go).
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+.git/
+.github/
+
+# Données et poids : arrivent par volume, jamais dans l'image (voir
+# Dockerfile et docker-compose.yml).
+data/
+models/
+
+notebooks/
+tests/
+scripts/
+
+*.md
+Dockerfile*
+docker-compose.yml
+.env
+.dockerignore

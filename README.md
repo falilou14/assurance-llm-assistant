@@ -120,6 +120,20 @@ pip install -r requirements-api.txt   # léger, sans torch -- utilisé aussi par
 APP_ENV=test pytest tests/test_api.py -v
 ```
 
+### 🐳 Avec Docker (recommandé)
+
+```bash
+docker compose up
+```
+
+Construit et lance les deux services (`api` + `ui`), dans l'ordre : `ui` attend que `api` soit déclarée `healthy` avant de démarrer (`depends_on: condition: service_healthy`). Même adresses que ci-dessus une fois lancé.
+
+- **Poids et index** : jamais copiés dans les images (`.dockerignore`) -- montés en lecture seule depuis `./models` et `./data/faiss_index`. Il faut donc avoir déjà exécuté les scripts 1-3 ci-dessus au moins une fois en local.
+- **Modèle de base** : mis en cache dans un volume Docker nommé (`hf-cache`) -- téléchargé une seule fois, réutilisé aux lancements suivants.
+- **Premier lancement** : peut prendre plusieurs minutes (téléchargement du modèle depuis Hugging Face, ~4-5 Go pour TinyLlama en fp32). Les lancements suivants sont nettement plus rapides (cache chaud).
+- **Image API** : ~2 Go (PyTorch CPU + Transformers + PEFT + FAISS). **Image UI** : ~575 Mo -- volontairement légère, elle n'importe plus torch depuis le passage à l'API (voir plus haut).
+- ⚠️ **Performance mesurée** : l'inférence est notablement plus lente en conteneur (WSL2/Docker) qu'en exécution directe sur la même machine -- observé jusqu'à ~3× plus lent sur une génération comparable, malgré 6 cœurs alloués à WSL2. Un vrai coût de virtualisation sur du calcul CPU intensif, à connaître avant de choisir Docker pour de l'inférence ML en production sur ce type de matériel.
+
 ---
 
 ## 📌 Cas d'usage métier
@@ -180,7 +194,11 @@ assurance-llm-assistant/
 │   └── test_api.py               # Tests de l'API avec un faux LLM (rapides, sans torch)
 ├── notebooks/                   # Exploration -- pas la source de vérité (voir ci-dessous)
 ├── .github/workflows/ci.yml     # Tests + lint à chaque push
-└── .streamlit/config.toml       # Thème de l'interface
+├── .streamlit/config.toml       # Thème de l'interface
+├── Dockerfile                    # Image API (~2 Go, PyTorch CPU)
+├── Dockerfile.ui                 # Image interface (~575 Mo, sans torch)
+├── docker-compose.yml            # Les deux services + volumes + healthcheck
+└── .dockerignore
 ```
 
 > Les notebooks (`01_preprocessing`, `02_training_lora`, `03_evaluation`) datent d'une version antérieure du pipeline et ne sont plus synchronisés avec le code actuel (`scripts/`). Tout l'entraînement et la construction du dataset se font désormais via des scripts autonomes, plus fiables à relancer et à déboguer.
@@ -195,6 +213,7 @@ assurance-llm-assistant/
 - **`bitsandbytes` en 4-bit peu fiable pour l'entraînement CPU** : pic mémoire élevé au chargement, calcul lent lors du backward — l'entraînement utilise `bfloat16` direct à la place ; la 4-bit reste utilisable pour de l'inférence simple.
 - **RAG à petite échelle** : `IndexFlatIP` (recherche exacte) convient à ce corpus, mais ne scalerait pas à des millions de documents (nécessiterait IVF ou HNSW).
 - **Pas d'évaluation automatisée** (type RAGAS) encore en place — les tests actuels sont manuels, sur un petit jeu de questions de contrôle.
+- **Inférence plus lente en conteneur** : mesurée jusqu'à ~3× plus lente sous Docker/WSL2 qu'en exécution directe sur la même machine, malgré 6 cœurs alloués. Coût de virtualisation réel sur du calcul CPU intensif -- à budgétiser avant de choisir ce chemin pour de l'inférence ML en production sur du matériel comparable.
 
 ---
 

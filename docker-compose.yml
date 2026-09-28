@@ -1,0 +1,48 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Poids et index en lecture seule -- l'API ne les modifie jamais.
+      - ./models:/data/models:ro
+      - ./data/faiss_index:/data/faiss_index:ro
+      # Volume nommé (pas un dossier du projet) : garde le modèle de
+      # base téléchargé de HuggingFace entre deux redémarrages, pour ne
+      # pas le retélécharger (~2 Go) à chaque fois.
+      - hf-cache:/data/hf-cache
+    healthcheck:
+      # python plutôt que curl : l'image de base ne l'a pas, et ajouter
+      # un paquet juste pour ça alourdirait l'image pour rien.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      # ~50s une fois le modèle en cache (volume hf-cache) -- mais le
+      # tout premier lancement le télécharge depuis HuggingFace (~2-4 Go),
+      # ce qui peut prendre plusieurs minutes selon la connexion. Marge
+      # large ici : observé en pratique avec start_period=90s trop court,
+      # le conteneur api a été déclaré "unhealthy" avant d'avoir fini.
+      start_period: 480s
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    environment:
+      # "api" est le nom du service ci-dessus -- Docker Compose fournit
+      # une résolution DNS interne entre services, "localhost" ne
+      # fonctionnerait pas ici (chaque conteneur a son propre réseau).
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  hf-cache:

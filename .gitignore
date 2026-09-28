@@ -79,9 +79,13 @@ datasets/
 config.json
 *.yaml
 *.yml
-# ...sauf les workflows GitHub Actions, qui doivent être versionnés
+# ...sauf les workflows GitHub Actions et docker-compose, qui doivent
+# être versionnés (la règle *.yml ci-dessus est trop large -- déjà
+# trouvée une première fois en session 4, cf. le dossier d'étude)
 !.github/workflows/*.yml
 !.github/workflows/*.yaml
+!docker-compose.yml
+!docker-compose.yaml
 
 # --- TEMP FILES ---
 *.tmp
