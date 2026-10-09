@@ -21,3 +21,8 @@ requests
 google-genai
 python-dotenv
 pydantic
+
+# RAG correctif (chapitre 5b) -- orchestration du graphe (grading,
+# reformulation, vérification). Tire langchain-core/langsmith en
+# dépendance (léger, pas tout l'écosystème LangChain).
+langgraph
