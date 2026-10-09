@@ -24,3 +24,21 @@ class HealthResponse(BaseModel):
 
 class ReadyResponse(BaseModel):
     ready: bool
+
+
+class AgentAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1000)
+    max_turns: int = Field(5, ge=1, le=10)
+
+
+class AgentToolCall(BaseModel):
+    outil: str
+    arguments: dict
+    resultat: dict
+
+
+class AgentAskResponse(BaseModel):
+    answer: str
+    trace: list[AgentToolCall]
+    nb_turns: int
+    latency_ms: float

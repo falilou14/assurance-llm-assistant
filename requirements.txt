@@ -14,3 +14,10 @@ fastapi
 uvicorn[standard]
 httpx
 requests
+
+# Agent (chapitre 4) -- backend LLM via API (Gemini, gratuit) + validation
+# des arguments d'outils. pydantic est déjà tiré par fastapi, listé ici
+# quand même car src/agent l'utilise directement, indépendamment de l'API.
+google-genai
+python-dotenv
+pydantic

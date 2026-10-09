@@ -103,10 +103,31 @@ st.markdown("""
 # ==========================================
 
 with st.sidebar:
+    st.header("Mode")
+    mode = st.radio(
+        "Comment répondre ?",
+        ["Assistant RAG (classique)", "Agent (avec outils)"],
+        help=(
+            "RAG classique : retrieval systématique puis génération par notre "
+            "modèle local (TinyLlama+LoRA). Agent : un modèle plus capable via "
+            "API (Gemini) décide lui-même quels outils appeler (recherche "
+            "documentaire, calculs métier, brouillon de déclaration)."
+        ),
+    )
+    is_agent_mode = mode == "Agent (avec outils)"
+
+    st.divider()
     st.header("Options")
-    use_rag = st.checkbox("Activer le RAG", value=True, help="Injecte les passages les plus pertinents de tes documents dans le prompt.")
-    top_k = st.slider("Documents récupérés (top_k)", 1, 5, 3)
-    max_tokens = st.slider("Longueur max de la réponse", 50, 400, 200, 10)
+    if is_agent_mode:
+        max_turns = st.slider(
+            "Tours max de l'agent", 1, 10, 5,
+            help="Plafond de garde-fou -- combien de fois l'agent peut appeler un outil avant de devoir conclure.",
+        )
+        show_trace = st.checkbox("Afficher la trace des outils utilisés", value=True)
+    else:
+        use_rag = st.checkbox("Activer le RAG", value=True, help="Injecte les passages les plus pertinents de tes documents dans le prompt.")
+        top_k = st.slider("Documents récupérés (top_k)", 1, 5, 3)
+        max_tokens = st.slider("Longueur max de la réponse", 50, 400, 200, 10)
 
     st.divider()
     st.header("État du système")
@@ -174,22 +195,51 @@ if question:
         st.markdown(question)
 
     with st.chat_message("assistant", avatar="🛡️"):
-        with st.spinner("Interrogation de l'API (génération CPU : jusqu'à 30-60 s)…"):
+        spinner_msg = (
+            "L'agent réfléchit (appel API Gemini, éventuellement plusieurs tours)…"
+            if is_agent_mode
+            else "Interrogation de l'API (génération CPU : jusqu'à 30-60 s)…"
+        )
+        with st.spinner(spinner_msg):
             try:
-                resp = requests.post(
-                    f"{API_URL}/ask",
-                    json={
-                        "question": question,
-                        "use_rag": use_rag,
-                        "top_k": top_k,
-                        "max_new_tokens": max_tokens,
-                    },
-                    timeout=180,  # génération CPU lente -- voir le dossier d'étude
-                )
+                if is_agent_mode:
+                    resp = requests.post(
+                        f"{API_URL}/agent/ask",
+                        json={"question": question, "max_turns": max_turns},
+                        timeout=120,
+                    )
+                else:
+                    resp = requests.post(
+                        f"{API_URL}/ask",
+                        json={
+                            "question": question,
+                            "use_rag": use_rag,
+                            "top_k": top_k,
+                            "max_new_tokens": max_tokens,
+                        },
+                        timeout=180,  # génération CPU lente -- voir le dossier d'étude
+                    )
+
                 if resp.status_code == 503:
-                    answer = "⏳ Le modèle est encore en train de charger côté API. Réessaie dans quelques instants."
+                    answer = (
+                        "⏳ Agent indisponible -- vérifie GEMINI_API_KEY dans .env."
+                        if is_agent_mode
+                        else "⏳ Le modèle est encore en train de charger côté API. Réessaie dans quelques instants."
+                    )
                 elif not resp.ok:
                     answer = f"⚠️ Erreur API ({resp.status_code}) : {resp.text[:200]}"
+                elif is_agent_mode:
+                    data = resp.json()
+                    answer = data["answer"]
+                    if show_trace and data.get("trace"):
+                        lignes = "\n".join(
+                            f"- `{step['outil']}({step['arguments']})` → `{step['resultat']}`"
+                            for step in data["trace"]
+                        )
+                        answer += (
+                            f"\n\n---\n*Outils utilisés ({data['nb_turns']} tour(s), "
+                            f"{data['latency_ms']:.0f} ms) :*\n{lignes}"
+                        )
                 else:
                     data = resp.json()
                     answer = data["answer"]

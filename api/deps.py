@@ -37,3 +37,25 @@ def get_llm_client(request: Request) -> LLMClientProtocol:
             detail="Modèle non chargé -- réessaie dans quelques instants.",
         )
     return client
+
+
+@runtime_checkable
+class AgentRunnerProtocol(Protocol):
+    """Contrat de l'agent (chapitre 4) -- une fonction, pas une classe : pas
+    d'état à charger une seule fois (contrairement à LocalLLMClient), chaque
+    appel crée sa propre connexion à l'API Gemini."""
+
+    def __call__(self, question: str, max_turns: int = 5) -> dict:
+        ...
+
+
+def get_agent_runner(request: Request) -> AgentRunnerProtocol:
+    """Même logique que get_llm_client -- 503 propre si l'agent n'est pas
+    disponible (ex. GEMINI_API_KEY absente), jamais un plantage brut."""
+    runner = getattr(request.app.state, "agent_runner", None)
+    if runner is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent non disponible -- vérifie GEMINI_API_KEY dans .env.",
+        )
+    return runner

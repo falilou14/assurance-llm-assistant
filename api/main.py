@@ -11,24 +11,42 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 
-from api.deps import LLMClientProtocol, get_llm_client
-from api.schemas import AskRequest, AskResponse, HealthResponse, ReadyResponse
+from api.deps import AgentRunnerProtocol, LLMClientProtocol, get_agent_runner, get_llm_client
+from api.schemas import (
+    AgentAskRequest,
+    AgentAskResponse,
+    AskRequest,
+    AskResponse,
+    HealthResponse,
+    ReadyResponse,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if os.environ.get("APP_ENV") == "test":
-        # En test, on ne charge jamais le vrai modèle : tests/test_api.py
-        # fournit un faux client via app.dependency_overrides.
+        # En test, on ne charge jamais le vrai modèle ni le vrai agent :
+        # tests/test_api.py fournit des faux clients via app.dependency_overrides.
         app.state.llm_client = None
+        app.state.agent_runner = None
     else:
         from src.llm_client import LocalLLMClient  # import lourd -- seulement ici
 
         app.state.llm_client = LocalLLMClient()
+
+        # Contrairement à LocalLLMClient, l'agent n'a rien à charger en RAM
+        # une seule fois (pas de poids) -- run_agent() crée sa propre
+        # connexion Gemini à chaque appel. On se contente de brancher la
+        # fonction ; la vraie vérification (GEMINI_API_KEY présente) n'a
+        # lieu qu'au premier appel, voir /agent/ask ci-dessous.
+        from src.agent.loop import run_agent
+
+        app.state.agent_runner = run_agent
     yield
     app.state.llm_client = None
+    app.state.agent_runner = None
 
 
 app = FastAPI(title="Assurance LLM API", version="0.1.0", lifespan=lifespan)
@@ -64,3 +82,27 @@ def ask(
     )
     latency_ms = (time.perf_counter() - t0) * 1000
     return AskResponse(answer=answer, sources=sources, latency_ms=round(latency_ms, 1))
+
+
+@app.post("/agent/ask", response_model=AgentAskResponse)
+def agent_ask(
+    payload: AgentAskRequest,
+    runner: AgentRunnerProtocol = Depends(get_agent_runner),
+) -> AgentAskResponse:
+    # Même raisonnement que /ask : def, pas async def -- run_agent() fait
+    # des appels réseau bloquants (API Gemini), potentiellement plusieurs
+    # tours ; FastAPI l'exécute dans un pool de threads.
+    t0 = time.perf_counter()
+    try:
+        result = runner(payload.question, max_turns=payload.max_turns)
+    except RuntimeError as exc:
+        # Cas concret : GEMINI_API_KEY absente -- levé par GeminiAgentClient,
+        # jamais laissé remonter comme un plantage brut au client HTTP.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    latency_ms = (time.perf_counter() - t0) * 1000
+    return AgentAskResponse(
+        answer=result["reponse"],
+        trace=result["trace"],
+        nb_turns=result["nb_tours"],
+        latency_ms=round(latency_ms, 1),
+    )

@@ -14,7 +14,7 @@ os.environ.setdefault("APP_ENV", "test")  # avant l'import de api.main
 import pytest
 from fastapi.testclient import TestClient
 
-from api.deps import get_llm_client
+from api.deps import get_agent_runner, get_llm_client
 from api.main import app
 
 
@@ -26,9 +26,20 @@ class FakeLLMClient:
         return f"Réponse factice à : {question}", sources
 
 
+def fake_agent_runner(question, max_turns=5):
+    """Respecte AgentRunnerProtocol (api/deps.py) -- pas d'appel réseau réel
+    vers Gemini, donc pas besoin de GEMINI_API_KEY pour lancer les tests."""
+    return {
+        "reponse": f"Réponse factice de l'agent à : {question}",
+        "trace": [{"outil": "calculer_franchise", "arguments": {}, "resultat": {}}],
+        "nb_tours": 1,
+    }
+
+
 @pytest.fixture()
 def client():
     app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient()
+    app.dependency_overrides[get_agent_runner] = lambda: fake_agent_runner
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -78,4 +89,27 @@ def test_ask_without_override_returns_503():
     app.dependency_overrides.clear()
     with TestClient(app) as c:
         resp = c.post("/ask", json={"question": "Test"})
+    assert resp.status_code == 503
+
+
+def test_agent_ask_returns_answer_with_fake_runner(client):
+    resp = client.post("/agent/ask", json={"question": "Ma voiture a été volée"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "Ma voiture a été volée" in data["answer"]
+    assert data["nb_turns"] == 1
+    assert data["trace"][0]["outil"] == "calculer_franchise"
+    assert data["latency_ms"] >= 0
+
+
+def test_agent_ask_rejects_empty_question(client):
+    resp = client.post("/agent/ask", json={"question": ""})
+    assert resp.status_code == 422
+
+
+def test_agent_ask_without_override_returns_503():
+    """Sans faux runner injecté, /agent/ask doit échouer proprement (503)."""
+    app.dependency_overrides.clear()
+    with TestClient(app) as c:
+        resp = c.post("/agent/ask", json={"question": "Test"})
     assert resp.status_code == 503

@@ -4,6 +4,10 @@ testPython.py
 
 # --- ENVIRONNEMENTS PYTHON ---
 venv/
+# .env (fichier, pas dossier) : contient la clé API Gemini du chapitre 4
+# -- ne doit jamais être commit. .env/ ci-dessous ne couvrait que le cas
+# dossier, pas le fichier -- ajouté explicitement.
+.env
 .env/
 .venv/
 env/
